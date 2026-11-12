@@ -1,0 +1,29 @@
+{
+  "name": "runner",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node ./bin/www",
+    "start-ws": "node $NODE_DEBUG_OPTION ./bin/www",
+    "test": "node ./test/test.js"
+  },
+  "dependencies": {
+    "config": "^1.30.0",
+    "cookie-parser": "~1.4.3",
+    "debug": "~2.6.9",
+    "express": "~4.16.0",
+    "http-errors": "~1.6.2",
+    "jade": "~1.11.0",
+    "json5": "^2.2.3",
+    "morgan": "^1.9.1",
+    "nodemailer": "^5.1.1",
+    "pug": "^2.0.3",
+    "restify-clients": "^2.6.4",
+    "update": "^0.7.4"
+  },
+  "devDependencies": {
+    "eslint": "^4.19.1",
+    "eslint-config-airbnb-base": "^12.1.0",
+    "eslint-plugin-import": "^2.12.0"
+  }
+}

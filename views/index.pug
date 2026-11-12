@@ -1,0 +1,14 @@
+html
+    head
+        title= title
+    body
+        h1= message
+        div= whoAreStarted
+        div
+            div Количество очередей для chrome: #{queueCount.chrome.queue} запущено #{queueCount.chrome.occupaed}
+                ul
+                    each task, index in runned.chrome
+                        li #{index} тест: #{task.testProject.tests[0].title} stdout: #{task.stdout} stderr: #{task.stderr}
+
+            div Количество очередей для firefox: #{queueCount.firefox.queue} запущено #{queueCount.firefox.occupaed}
+            div Количество очередей для ie: #{queueCount.ie.queue} запущено #{queueCount.ie.occupaed}

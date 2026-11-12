@@ -1,0 +1,5 @@
+node_modules/
+.idea
+public/screenshots
+package-lock.json
+.env
