@@ -137,6 +137,33 @@ function copyAtomic(dir, name, source) {
 }
 
 /**
+ * Копирует скриншот в каталог результатов и привязывает его к результату.
+ * Скриншот кладется на первый упавший (или сломанный) шаг, а не на весь тест.
+ * Если такого шага нет (например, результат без элемента cucumber), он остается на тесте.
+ * Скриншот лежит либо на шаге, либо на тесте, но не в обоих местах, иначе он продублируется в UI.
+ * @param {string} target каталог результатов
+ * @param {string} uuid uuid результата
+ * @param {Object} result объект результата (изменяется)
+ * @param {string} screenshot путь к png
+ * @returns {boolean} true, если скриншот записан
+ */
+function attachScreenshot(target, uuid, result, screenshot) {
+  if (!screenshot || !fs.existsSync(screenshot)) {
+    return false;
+  }
+  const source = `${uuid}-attachment.png`;
+  copyAtomic(target, source, screenshot);
+  const attachment = { name: 'Скриншот', source, type: 'image/png' };
+  const badStep = result.steps.find(s => s.status === 'failed') || result.steps.find(s => s.status === 'broken');
+  if (badStep) {
+    badStep.attachments = [attachment];
+  } else {
+    result.attachments = [attachment];
+  }
+  return true;
+}
+
+/**
  * Записывает результат теста (и скриншот, если он есть) в каталог allure-results.
  * Файл результата появляется последним, после вложений.
  * Синхронный вариант без паузы: подходит для результатов без вложений.
@@ -148,11 +175,7 @@ function writeAllureResult(dir, p) {
   const target = path.resolve(dir);
   fs.mkdirSync(target, { recursive: true });
   const { uuid, result } = buildResult(p);
-  if (p.screenshot && fs.existsSync(p.screenshot)) {
-    const source = `${uuid}-attachment.png`;
-    copyAtomic(target, source, p.screenshot);
-    result.attachments = [{ name: 'Скриншот', source, type: 'image/png' }];
-  }
+  attachScreenshot(target, uuid, result, p.screenshot);
   writeAtomic(target, `${uuid}-result.json`, JSON.stringify(result, null, 2));
   return result;
 }
@@ -171,13 +194,8 @@ async function writeAllureResultDelayed(dir, p, delayMs) {
   const target = path.resolve(dir);
   fs.mkdirSync(target, { recursive: true });
   const { uuid, result } = buildResult(p);
-  if (p.screenshot && fs.existsSync(p.screenshot)) {
-    const source = `${uuid}-attachment.png`;
-    copyAtomic(target, source, p.screenshot);
-    result.attachments = [{ name: 'Скриншот', source, type: 'image/png' }];
-    if (delayMs > 0) {
-      await sleep(delayMs);
-    }
+  if (attachScreenshot(target, uuid, result, p.screenshot) && delayMs > 0) {
+    await sleep(delayMs);
   }
   writeAtomic(target, `${uuid}-result.json`, JSON.stringify(result, null, 2));
   return result;
