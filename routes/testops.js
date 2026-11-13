@@ -5,7 +5,7 @@ const { cwd } = require('process');
 const TestManager = require('../src/TestManager');
 const browserConveers = require('../src/ConveerStart');
 const runLock = require('../src/RunLock');
-const { writeAllureResult } = require('../src/AllureConverter');
+const { writeAllureResult, writeAllureResultDelayed } = require('../src/AllureConverter');
 
 const router = express.Router();
 
@@ -21,6 +21,18 @@ const ALLURE_ROOT = path.resolve(process.env.ALLURE_DATA_DIR || '/allure-data');
 // запуск останавливается, а контейнеры освобождаются
 const WATCHDOG_MS = (Number(process.env.WATCHDOG_SECONDS) || 300) * 1000;
 const WATCHDOG_TICK_MS = Math.min(WATCHDOG_MS, 30000);
+
+// Пауза между записью скриншота и записью result.json (мс). allurectl watch загружает вложение
+// и результат отдельными запросами: если результат доходит до ТестОпс раньше вложения,
+// в отчете показывается "Вложение удалено". Подобрано экспериментально, 0 отключает паузу
+const ATTACHMENT_DELAY_MS = (() => {
+  const raw = process.env.ALLURE_ATTACHMENT_DELAY_MS;
+  if (raw === undefined || raw === '') {
+    return 3000;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : 3000;
+})();
 
 const PASSED = 1;
 const FAILED = 5;
@@ -93,7 +105,8 @@ const publicView = (st) => {
   };
 };
 
-// Записывает результат теста в каталог Allure (если он задан для запуска)
+// Записывает результат теста в каталог Allure (если он задан для запуска).
+// Синхронный вариант без паузы, только для результатов без скриншота
 const writeResult = (st, test, extra) => {
   if (!st.allureDir) {
     return;
@@ -107,6 +120,24 @@ const writeResult = (st, test, extra) => {
       stoppedAt: now,
       ...extra,
     });
+  } catch (e) {
+    st.allureErrors += 1;
+    console.error(`[testops] ${st.key} не удалось записать результат Allure для теста ${test.id}`, e);
+  }
+};
+
+// Записывает результат теста со скриншотом: между вложением и result.json выдерживается пауза
+const writeResultWithAttachment = async (st, test, extra) => {
+  if (!st.allureDir) {
+    return;
+  }
+  try {
+    await writeAllureResultDelayed(st.allureDir, {
+      allureId: test.id,
+      title: test.title,
+      stoppedAt: Date.now(),
+      ...extra,
+    }, ATTACHMENT_DELAY_MS);
   } catch (e) {
     st.allureErrors += 1;
     console.error(`[testops] ${st.key} не удалось записать результат Allure для теста ${test.id}`, e);
@@ -311,28 +342,27 @@ router.post('/launch', (req, res) => {
   // Отвечаем сразу: конструктор TestManager синхронно опрашивает docker-образы (execSync)
   res.json({ launchId: id, state: st.state, total: st.tests.length });
 
-  // Отчет приходит на каждый завершенный Task (обычно массив результатов)
+  // Отчет приходит на каждый завершенный Task (обычно массив результатов).
+  // Task ждет завершения sendReport, поэтому пауза перед записью result.json удерживает
+  // слот конвейера и не дает запуску завершиться раньше, чем результат записан
   const sendReport = async (result) => {
     if (st.state !== 'running') {
       return;
     }
-    [].concat(result).forEach((item) => {
-      if (!item || item.test_id === undefined) {
-        return;
+    for (const item of [].concat(result)) {
+      const test = item && item.test_id !== undefined
+        ? st.tests.find(t => String(t.id) === String(item.test_id))
+        : null;
+      if (test) {
+        st.results[test.id] = { status: toStatusName(item.status_id), elapsed: item.elapsed };
+        console.log(`[testops] ${key} тест ${test.id}: ${st.results[test.id].status} (${item.elapsed})`);
+        await writeResultWithAttachment(st, test, {
+          element: item.raw,
+          startedAt: item.startedAt,
+          screenshot: item.screenshot,
+        });
       }
-      const test = st.tests.find(t => String(t.id) === String(item.test_id));
-      if (!test) {
-        return;
-      }
-      st.results[test.id] = { status: toStatusName(item.status_id), elapsed: item.elapsed };
-      console.log(`[testops] ${key} тест ${test.id}: ${st.results[test.id].status} (${item.elapsed})`);
-      writeResult(st, test, {
-        element: item.raw,
-        startedAt: item.startedAt,
-        stoppedAt: Date.now(),
-        screenshot: item.screenshot,
-      });
-    });
+    }
   };
 
   setImmediate(async () => {
@@ -357,7 +387,7 @@ router.post('/launch', (req, res) => {
         custom_url: t.image,
         run_id: key,
       }));
-      console.log(`[testops] ${key} старт: ${managerTests.length} тестов, браузер ${browser}, окружение ${nodeEnv}, Allure: ${st.allureDir || 'нет'}`);
+      console.log(`[testops] ${key} старт: ${managerTests.length} тестов, браузер ${browser}, окружение ${nodeEnv}, Allure: ${st.allureDir || 'нет'}, пауза перед result.json: ${ATTACHMENT_DELAY_MS} мс`);
       const Manager = new TestManager(managerTests, checkedTests, sendReport, () => finishRun(st, 'finished'));
       // Конструктор синхронный и может блокировать event loop надолго (docker run для каждого образа)
       st.lastSeen = Date.now();

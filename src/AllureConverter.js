@@ -8,6 +8,8 @@ const FRAMEWORK = 'cucumber-js';
 
 const md5 = text => crypto.createHash('md5').update(text).digest('hex');
 
+const sleep = ms => new Promise((resolve) => { setTimeout(resolve, ms); });
+
 const firstLine = (text) => {
   const line = String(text || '').split('\n').find(l => l.trim() !== '') || '';
   return line.trim().slice(0, 1000);
@@ -137,6 +139,7 @@ function copyAtomic(dir, name, source) {
 /**
  * Записывает результат теста (и скриншот, если он есть) в каталог allure-results.
  * Файл результата появляется последним, после вложений.
+ * Синхронный вариант без паузы: подходит для результатов без вложений.
  * @param {string} dir каталог результатов
  * @param {Object} p параметры, см. buildResult, плюс screenshot (путь к png)
  * @returns {Object} записанный результат
@@ -154,4 +157,30 @@ function writeAllureResult(dir, p) {
   return result;
 }
 
-module.exports = { buildResult, writeAllureResult };
+/**
+ * То же, что writeAllureResult, но между записью вложения и записью result.json
+ * выдерживается пауза. allurectl watch загружает вложение и результат отдельными запросами,
+ * и если результат доходит до ТестОпс раньше вложения, в отчете показывается "Вложение удалено".
+ * Пауза делается только когда вложение действительно записано.
+ * @param {string} dir каталог результатов
+ * @param {Object} p параметры, см. writeAllureResult
+ * @param {number} delayMs пауза между вложением и result.json, мс
+ * @returns {Promise<Object>} записанный результат
+ */
+async function writeAllureResultDelayed(dir, p, delayMs) {
+  const target = path.resolve(dir);
+  fs.mkdirSync(target, { recursive: true });
+  const { uuid, result } = buildResult(p);
+  if (p.screenshot && fs.existsSync(p.screenshot)) {
+    const source = `${uuid}-attachment.png`;
+    copyAtomic(target, source, p.screenshot);
+    result.attachments = [{ name: 'Скриншот', source, type: 'image/png' }];
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+  }
+  writeAtomic(target, `${uuid}-result.json`, JSON.stringify(result, null, 2));
+  return result;
+}
+
+module.exports = { buildResult, writeAllureResult, writeAllureResultDelayed };
